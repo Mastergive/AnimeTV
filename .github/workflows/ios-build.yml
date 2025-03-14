@@ -1,35 +1,114 @@
-release_mobile:
-    runs-on: macos-latest
-    if: startsWith(github.event.head_commit.message, 'Release:')
-    steps:
-        - name: Checkout Repository
-          uses: actions/checkout@v4
-        
-        - name: Select Xcode Version
-          run: sudo xcode-select -s /Applications/Xcode_12.4.app
+name: Nightly Build
+on:
+    push:
+        branches: master
+        paths:
+          - 'app/build.gradle'
+    workflow_dispatch:
 
-        - name: Install Dependencies
-          run: |
-            brew install cocoapods
-            cd ios && pod install --repo-update && cd ..
+jobs:
+    release_desktop:
+        strategy:
+            matrix:
+                platform: [ windows-latest, ubuntu-latest]
+        runs-on: ${{ matrix.platform }}
+        if: startsWith(github.event.head_commit.message, 'Release:')
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+            
+            - name: Node.js setup
+              uses: actions/setup-node@v4
+              with:
+                node-version: latest
 
-        - name: Build iOS App
-          run: |
-            xcodebuild -workspace ios/YourApp.xcworkspace \
-              -scheme YourApp \
-              -sdk iphoneos \
-              -configuration Release \
-              -archivePath build/YourApp.xcarchive archive
+            - name: Install app dependencies
+              run: npm install
 
-        - name: Export IPA
-          run: |
-            xcodebuild -exportArchive \
-              -archivePath build/YourApp.xcarchive \
-              -exportOptionsPlist ios/exportOptions.plist \
-              -exportPath build/YourApp.ipa
+            - name: Build app (Windows - x64)
+              if: matrix.platform == 'windows-latest'
+              run: npm run build-win
+              
+            - name: Upload build windows installer (Windows - x64)
+              uses: actions/upload-artifact@v4
+              if: matrix.platform == 'windows-latest'
+              with:
+                  name: animetv-win32-x64.exe
+                  path: ./electron/builds/*.exe
 
-        - name: Upload iOS Build
-          uses: actions/upload-artifact@v4
-          with:
-            name: animetv-ios.ipa
-            path: build/YourApp.ipa
+            - name: Build app (Linux - x64 & arm64)
+              if: matrix.platform == 'ubuntu-latest'
+              run: npm run build-linux && npm run build-linux-arm64
+            
+            - name: Upload build deb (Linux - x64)
+              uses: actions/upload-artifact@v4
+              if: matrix.platform == 'ubuntu-latest'
+              with:
+                name: animetv-linux-x64.deb
+                path: ./electron/builds/*_amd64.deb
+
+    release_mobile:
+        strategy:
+            matrix:
+                platform: [ubuntu-latest, macos-latest]
+        runs-on: ${{ matrix.platform }}
+        if: startsWith(github.event.head_commit.message, 'Release:')
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v4
+
+            - name: Setup Java (For Android)
+              if: matrix.platform == 'ubuntu-latest'
+              uses: actions/setup-java@v4
+              with:
+                distribution: 'zulu'
+                java-version: 17
+
+            - name: Setup Gradle (For Android)
+              if: matrix.platform == 'ubuntu-latest'
+              uses: gradle/actions/setup-gradle@v3
+
+            - name: Build APK (For Android)
+              if: matrix.platform == 'ubuntu-latest'
+              run: ./gradlew assembleRelease
+            
+            - name: Upload build (Android)
+              if: matrix.platform == 'ubuntu-latest'
+              uses: actions/upload-artifact@v4
+              with:
+                name: animetv-android.apk
+                path: ./app/build/outputs/apk/release/*.apk
+
+            - name: Select Xcode Version (For iOS)
+              if: matrix.platform == 'macos-latest'
+              run: sudo xcode-select -s /Applications/Xcode_12.4.app
+
+            - name: Install CocoaPods (For iOS)
+              if: matrix.platform == 'macos-latest'
+              run: |
+                brew install cocoapods
+                cd ios && pod install --repo-update && cd ..
+
+            - name: Build iOS App
+              if: matrix.platform == 'macos-latest'
+              run: |
+                xcodebuild -workspace ios/YourApp.xcworkspace \
+                  -scheme YourApp \
+                  -sdk iphoneos \
+                  -configuration Release \
+                  -archivePath build/YourApp.xcarchive archive
+
+            - name: Export IPA
+              if: matrix.platform == 'macos-latest'
+              run: |
+                xcodebuild -exportArchive \
+                  -archivePath build/YourApp.xcarchive \
+                  -exportOptionsPlist ios/exportOptions.plist \
+                  -exportPath build/YourApp.ipa
+
+            - name: Upload iOS Build
+              if: matrix.platform == 'macos-latest'
+              uses: actions/upload-artifact@v4
+              with:
+                name: animetv-ios.ipa
+                path: build/YourApp.ipa
